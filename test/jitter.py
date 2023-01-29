@@ -7725,6 +7725,7 @@ class JitterTool(object):
       cls,
       spike_times_x, spike_times_y,
       model_par,
+      kernel_width_grid=None,
       output_dir=None):
     """Calculate Sxx from raw data."""
     dt = model_par['dt']
@@ -7749,7 +7750,7 @@ class JitterTool(object):
     # kernel_widths_sim = np.array([35]) / 1000
     if model_par['append_nuisance'][1] == 'gaussian_kernel':
       kernel_widths_sim = np.array([
-          2,3,5,10,20,30,40,45,50,55,60,65,70,75,80,90,95,
+          2,3,5,10,20,30,40,45,50,55,60,65,70,75,80,85,90,95,
           100,105,110,120,125,130,135,140,145,150,155,160,200,400]) / 1000
     elif model_par['append_nuisance'][1] == 'triangle_kernel':
       kernel_widths_sim = np.array([
@@ -7762,11 +7763,15 @@ class JitterTool(object):
           200,250,300,350,400,420,430,450,480,
           500,550,600,620,650,800,1000]) / 1000
 
+    if kernel_width_grid is not None:
+      kernel_widths_sim = kernel_width_grid
+
     num_scenarios = len(kernel_widths_sim)
     Sxx_hat = np.zeros([num_scenarios,5,5])
     log_likeli_hat = np.zeros(num_scenarios)
 
-    for k, kernel_width in enumerate(kernel_widths_sim):
+    for k, kernel_width in tqdm(enumerate(kernel_widths_sim), file=sys.stdout,
+        ncols=100, total=len(kernel_widths_sim)):
       par_input = model_par.copy()
       par_input['kernel_width'] = kernel_width
       spike_hist_stacked_x, _ = cls.bin_spike_times(spike_times_x, dt, trial_length)
@@ -7792,6 +7797,7 @@ class JitterTool(object):
       b = np.array([[S_wy],[S_hy]])
       H = np.array([[S_ww, S_hw],[S_hw, S_hh]])
       log_likeli_hat[k] = 1/2/bar_lambda_j * b.T @ np.linalg.inv(H) @ b
+
     # Align the peak of the log-likelihood to the peak.
     log_likeli_hat = log_likeli_hat - np.max(log_likeli_hat)
     xlim = (0, 3.2)
@@ -7806,7 +7812,7 @@ class JitterTool(object):
     fig, axs = plt.subplots(figsize=(6, 2), gridspec_kw=gs_kw,
         nrows=1, ncols=1)
     ax = fig.add_subplot(axs)
-    # plt.axvline(np.log10(max_ll_kernel_width)+3, color='lightgrey', lw=1)
+    plt.axvline(np.log10(max_ll_kernel_width)+3, color='lightgrey', lw=1)
     plt.plot(np.log10(kernel_widths_sim)+3, log_likeli_hat,
         '.-', c='tab:blue', label='numerical')
     plt.xlim(xlim)
@@ -7820,7 +7826,7 @@ class JitterTool(object):
       print('save figure:', file_path)
     plt.show()
 
-    return kernel_widths_sim, log_likeli_hat
+    return kernel_widths_sim, log_likeli_hat, max_ll_kernel_width
 
 
   @classmethod

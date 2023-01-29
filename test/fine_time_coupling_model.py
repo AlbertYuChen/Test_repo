@@ -229,6 +229,7 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
           within_probe: pairs within probes.
     """
     unit_pairs = []
+    area_pairs = []
 
     if pair_type == 'all':
       unit_ids = active_units.index.values
@@ -239,8 +240,9 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
       if probe_pairs is None:
         probe_pairs = itertools.combinations(self.probes, 2)
       for probe_x, probe_y in probe_pairs:
-        units_x = active_units[active_units['probe_description'] == probe_x].index.values
-        units_y = active_units[active_units['probe_description'] == probe_y].index.values
+        area_pairs.append((probe_x, probe_y))
+        units_x = active_units[active_units['probe_description']==probe_x].index.values
+        units_y = active_units[active_units['probe_description']==probe_y].index.values
         for unit_x in units_x:
           for unit_y in units_y:
             unit_pairs.append((unit_x, unit_y))
@@ -254,6 +256,7 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
           unit_pairs.append((unit_x, unit_y))
 
     if verbose:
+      print('area paris', area_pairs)
       print(f'num_pairs: {len(unit_pairs)}')
     return unit_pairs
 
@@ -593,6 +596,44 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
         f'{np.around(total_significant_cnt/total_cnt*100, 2)}%')
 
 
+  def build_graph_from_regression_pval(
+      self,
+      df_inference,
+      layout_units=None,
+      graph_template=None,
+      figure_path=None,
+      verbose=False):
+    """Plot pairs of units."""
+    graph = nx.Graph(name='units connections')
+
+    if layout_units is None:
+      units = self.selected_units
+    else:
+      units = layout_units
+
+    # Add nodes layout.
+    for unit_id in units.index.values:
+        unit_probe = units.loc[unit_id, 'probe_description']
+        graph.add_node(unit_id, probe=unit_probe)
+
+    # Add edges.
+    for key in df_inference.index:
+
+        # Detect significance.
+        if not df_inference.loc[key].significant:
+            continue
+
+        (unit_x, unit_y) = key
+        graph.add_weighted_edges_from([(unit_x, unit_y, 1)])
+
+    # Add information after building the graph.
+    for v in graph:
+        graph.nodes[v]['degree'] = graph.degree(v)
+
+    # Plot chord graph.
+    self.plot_chord_diagram(graph, graph_template=None, figure_path=figure_path)
+
+
   def build_graph_from_xorr_pairs(
       self,
       layout_units,
@@ -776,7 +817,7 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
       ys.append(y)
     node_coords = {"x": xs, "y": ys}
 
-    plt.figure(figsize=(10, 10))
+    plt.figure(figsize=(5, 5))
     ax = plt.gca()
     # Nodes.
     lw = nodeprops["linewidth"]
@@ -827,7 +868,7 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
         deg = theta / np.pi * 180 - 90
         deg = deg - 180 if theta < 0 else deg
         ax.text(x, y, map_probe_to_areas[node_probe],
-                rotation=deg, ha='center', va='center')
+                rotation=deg, ha='center', va='center', fontsize=12)
 
     ax.relim()
     ax.autoscale_view()
@@ -1511,41 +1552,84 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
 
     return spike_times_multi
 
+  def pairwise_bivariate_regression_runner(self, neuron_pair):
+    print(neuron_pair, 'start')
+    return neuron_pair
 
   def pairwise_bivariate_regression(
       self,
       filter_membership,
       model_par=None,
       verbose=False,
-      file_dir=None):
+      file_dir=None,
+      parallel=False,
+      num_threads=30):
     """Regression for all indicies (pairs)."""
     spike_times = self.spike_times
     trial_window = self.trial_window
-    model_list = []
     file_path = None
 
-    if hasattr(tqdm, '_instances'):
-      tqdm._instances.clear()
-    trange = enumerate(tqdm(filter_membership.index, ncols=100, file=sys.stdout))
+    if parallel:
+      import multiprocessing
+      pool = multiprocessing.Pool(num_threads)
 
-    for i, (neuron_x, neuron_y) in trange:
-      filter_membership_sub = filter_membership.loc[[(neuron_x,neuron_y)],:]
-      spike_times_x, spike_times_y = self.stack_spike_times_by_pairs_all(
-          spike_times, filter_membership_sub, batch_size=None, verbose=False)
+      global model_list
+      model_list = []
+      def get_results(result):
+        model_list.append(result)
 
-      model_hat = self.jittertool.bivariate_continuous_time_coupling_filter_regression(
-          spike_times_x, spike_times_y, trial_window, model_par, mute_warning=True)
-      model_list.append(((neuron_x, neuron_y), model_hat))
+      # def runner(neuron_pair):
+      #   print(neuron_pair, 'start')
+      #   return neuron_pair
+        # filter_membership_sub = filter_membership.loc[[neuron_pair],:]
+        # spike_times_x, spike_times_y = self.stack_spike_times_by_pairs_all(
+        #     spike_times, filter_membership_sub, batch_size=None, verbose=False)
+        # model_hat = self.jittertool.bivariate_continuous_time_coupling_filter_regression(
+        #     spike_times_x, spike_times_y, trial_window, model_par, mute_warning=True)
+        # print(neuron_pair, 'done')
+        # return neuron_pair, model_hat
 
-      if verbose:
-        self.jittertool.spike_times_statistics(spike_times_x, trial_window[1], verbose=1)
-        self.jittertool.spike_times_statistics(spike_times_y, trial_window[1], verbose=1)
+      for i, neuron_pair in enumerate(filter_membership.index):
+        if i > 30:
+          break
+        # out = runner(neuron_pair)
+        # get_results(out)
 
-        print(f'{(neuron_x, neuron_y)}')
-        if file_dir is not None:
-          file_path = file_dir + f'trial{trial_id}_regression.pdf'
-        self.jittertool.plot_continuous_time_bivariate_regression_model_par(
-            model_list[-1][1], ylim=[-10, 10])
+        pool.apply_async(self.pairwise_bivariate_regression_runner,
+            args=(neuron_pair,), callback=get_results)
+
+        # res = pool.apply_async(self.runner, args=(neuron_pair,)).get()
+        # print(res)
+        # print(out[0])
+
+      pool.close()
+      pool.join()
+      return model_list
+
+    else:
+      model_list = []
+      if hasattr(tqdm, '_instances'):
+        tqdm._instances.clear()
+      trange = enumerate(tqdm(filter_membership.index, ncols=100, file=sys.stdout))
+
+      for i, (neuron_x, neuron_y) in trange:
+        filter_membership_sub = filter_membership.loc[[(neuron_x,neuron_y)],:]
+        spike_times_x, spike_times_y = self.stack_spike_times_by_pairs_all(
+            spike_times, filter_membership_sub, batch_size=None, verbose=False)
+
+        model_hat = self.jittertool.bivariate_continuous_time_coupling_filter_regression(
+            spike_times_x, spike_times_y, trial_window, model_par, mute_warning=True)
+        model_list.append(((neuron_x, neuron_y), model_hat))
+
+        if verbose:
+          self.jittertool.spike_times_statistics(spike_times_x, trial_window[1], verbose=1)
+          self.jittertool.spike_times_statistics(spike_times_y, trial_window[1], verbose=1)
+
+          print(f'{(neuron_x, neuron_y)}')
+          if file_dir is not None:
+            file_path = file_dir + f'trial{trial_id}_regression.pdf'
+          self.jittertool.plot_continuous_time_bivariate_regression_model_par(
+              model_list[-1][1], ylim=[-10, 10])
 
     return model_list
 
@@ -1978,6 +2062,7 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
   def estimate_nuisance_kernel_width_together(
       self,
       filter_membership,
+      kernel_width_grid=None,
       batch_size=5000,
       random_seed=None,
       verbose=False):
@@ -1996,17 +2081,19 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
 
     spike_times_x, spike_times_y = self.stack_spike_times_by_pairs_all(
         spike_times, filter_membership, batch_size=batch_size,
-        random_seed=random_seed, verbose=True)
+        random_seed=random_seed, verbose=False)
     # check_stats(spike_times_x, trial_window[1], verbose=0)
     # check_stats(spike_times_y, trial_window[1], verbose=0)
+
     model_par = {'dt': 0.001, 'trial_window': trial_window,
         'append_nuisance': ['const', 'gaussian_kernel']}
-    jitter.JitterTool.estimate_optimal_jitter_window_width(
-        spike_times_x, spike_times_y, model_par)
+    return jitter.JitterTool.estimate_optimal_jitter_window_width(
+        spike_times_x, spike_times_y, model_par, kernel_width_grid=kernel_width_grid)
+
     # model_par = {'dt': 0.001, 'trial_window': trial_window,
     #     'append_nuisance': ['const', 'triangle_kernel']}
-    # jitter.JitterTool.estimate_optimal_jitter_window_width(
-    #     spike_times_x, spike_times_y, model_par)
+    # return jitter.JitterTool.estimate_optimal_jitter_window_width(
+    #     spike_times_x, spike_times_y, model_par, kernel_width_grid=kernel_width_grid)
 
 
   def update_cluster_filter_bspline(
@@ -2598,7 +2685,63 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
 
 
   @classmethod
-  def ks_test(
+  def ks_test_models_list(
+      cls,
+      spike_times,
+      trial_window,
+      model_list,
+      filter_membership,
+      verbose=False):
+    """KS test for each model."""
+    trial_ids = spike_times.columns.values if trial_ids is None else trial_ids
+    filter_membership = filter_membership.copy()
+
+    u_list_dict = {}
+    if hasattr(tqdm, '_instances'):
+      tqdm._instances.clear()
+    # trange = (enumerate(tqdm(filter_membership.index, ncols=100)) if verbose==1
+    #           else enumerate(filter_membership.index))
+    trange = enumerate(filter_membership.index)
+    for i, (neuron_x, neuron_y) in trange:
+      # if i != 69:
+      #   continue
+      # if neuron_x % 3 == 0 and neuron_y % 3 == 0:
+      #   print(i, neuron_x, neuron_y)
+      # else:
+      #   continue
+
+      u_list = []
+      for r, trial_id in enumerate(trial_ids):
+        spike_times_x = spike_times.loc[neuron_x,[trial_id]].tolist()
+        spike_times_y = spike_times.loc[neuron_y,[trial_id]].tolist()
+        num_spikes_y = [len(spikes) for spikes in spike_times_y]
+        num_spikes_y = np.sum(num_spikes_y)
+        num_spikes_x = [len(spikes) for spikes in spike_times_x]
+        num_spikes_x = np.sum(num_spikes_x)
+        # jitter.JitterTool.spike_times_statistics(spike_times_x, trial_window[1], verbose=1)
+        # jitter.JitterTool.spike_times_statistics(spike_times_y, trial_window[1], verbose=1)
+        group_id = filter_membership.loc[(neuron_x, neuron_y),[trial_id]].values[0]
+
+        # If the trial does not have a lot spikes, skip the verification.
+        if num_spikes_y <= 5 or num_spikes_x <= 5:
+          continue
+
+        u_vals = jitter.JitterTool.ks_test(
+            spike_times_x, spike_times_y, trial_window, model_par,
+            dt=0.001, test_size=0.05, verbose=False)
+        u_list.append(u_vals)
+
+      u_list = np.hstack(u_list)
+      u_list = u_list[(u_list>=0) & (u_list<=1)]
+      u_list_dict[(neuron_x, neuron_y)] = u_list
+      CI_trap, mcdf, ecdf, CI_up, CI_dn = jitter.JitterTool.check_ks(u_list,
+          test_size=0.01, bin_width=0.02, verbose=True)
+
+    return u_list_dict
+
+
+  @classmethod
+  def ks_test_group_wise(
       cls,
       spike_times,
       trial_window,

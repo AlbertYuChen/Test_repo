@@ -2842,18 +2842,19 @@ class HierarchicalModelGenerator(HierarchicalSamplingModel):
         x = np.sort(x)
         y = intensity_func(x)
         gs_kw = dict(width_ratios=[1], height_ratios=[1])
-        fig, axs = plt.subplots(figsize=(6, 2), gridspec_kw=gs_kw,
+        fig, axs = plt.subplots(figsize=(5, 3), gridspec_kw=gs_kw,
           nrows=1, ncols=1)
         plt.subplots_adjust(hspace=0, wspace=0)
         ax = fig.add_subplot(axs)
-        ax.tick_params(labelbottom=False)
-        for peak in peaks:
-          plt.axvline(x=peak, c='grey', lw=0.3)
+        # ax.tick_params(labelbottom=False)
+        # for peak in peaks:
+        #   plt.axvline(x=peak, c='grey', lw=0.3)
         plt.plot(x, y, 'k')
         plt.xlim(0, trial_length)
         plt.ylim(0, intensity_max+20)
-        plt.ylabel('Firing rate [spk/sec]')
-        plt.xlabel('Time [sec]')
+        plt.ylabel('Firing rate [spk/sec]', fontsize=15)
+        plt.xlabel('Time [sec]', fontsize=15)
+        plt.title('Background activity', fontsize=15)
         if file_path is not None:
           plt.savefig(file_path, bbox_inches='tight')
           print('save figure:', file_path)

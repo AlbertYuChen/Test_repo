@@ -595,6 +595,30 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
     print('Overall significant ratio: '+
         f'{np.around(total_significant_cnt/total_cnt*100, 2)}%')
 
+  def select_plot_edges(
+      self,
+      df_inference,
+      probe_pairs=None,
+      select_ratio=1.0):
+    """df_inference has columns below.
+    source target pval  h source_probe  target_probe  source_area target_area
+    951092303 951103361 1.598066e-01  0.628878  probeA  probeC  VISam VISp
+    """
+    df_inference = df_inference.copy()
+
+    if probe_pairs is not None:
+      df_inference['source_target_tuple'] = list(zip(
+          df_inference.source_probe, df_inference.target_probe))
+      df_inference = df_inference[df_inference.source_target_tuple.isin(probe_pairs)]
+      del df_inference['source_target_tuple']
+
+    if select_ratio < 1.0:
+      hide_edges = df_inference[df_inference.significant].sample(
+          frac=(1-select_ratio), random_state=3)
+      df_inference.loc[hide_edges.index] = False
+
+    return df_inference
+
 
   def build_graph_from_regression_pval(
       self,
@@ -616,6 +640,7 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
         unit_probe = units.loc[unit_id, 'probe_description']
         graph.add_node(unit_id, probe=unit_probe)
 
+    print('num edges', df_inference.significant.sum())
     # Add edges.
     for key in df_inference.index:
 
@@ -631,7 +656,8 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
         graph.nodes[v]['degree'] = graph.degree(v)
 
     # Plot chord graph.
-    self.plot_chord_diagram(graph, graph_template=None, figure_path=figure_path)
+    self.plot_chord_diagram(graph, graph_template=graph_template, figure_path=figure_path)
+    return graph
 
 
   def build_graph_from_xorr_pairs(
@@ -778,7 +804,7 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
     nodes = list(graph.nodes())  # List of node keys (val not included).
     nodeprops = {'radius': 1}
     node_r = nodeprops['radius']
-    radius = nxviz.geometry.circos_radius(n_nodes=len(nodes), node_r=node_r)
+    radius = nxviz.geometry.circos_radius(len(nodes), node_r)
     nodeprops["linewidth"] = radius * 0.01
     plot_radius = radius
     edge_colors = ['black'] * len(graph.edges())
@@ -1552,9 +1578,18 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
 
     return spike_times_multi
 
+
+  @classmethod
   def pairwise_bivariate_regression_runner(self, neuron_pair):
+    """The function has to be pickalbe.
+    So need to use classmethod for multiprocessing runner.
+    """
     print(neuron_pair, 'start')
-    return neuron_pair
+    model_hat = self.jittertool.bivariate_continuous_time_coupling_filter_regression(
+        spike_times_x, spike_times_y, trial_window, model_par, mute_warning=True)
+    print(neuron_pair, 'done')
+    return neuron_pair, model_hat
+
 
   def pairwise_bivariate_regression(
       self,
@@ -1578,25 +1613,18 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
       def get_results(result):
         model_list.append(result)
 
-      # def runner(neuron_pair):
-      #   print(neuron_pair, 'start')
-      #   return neuron_pair
-        # filter_membership_sub = filter_membership.loc[[neuron_pair],:]
-        # spike_times_x, spike_times_y = self.stack_spike_times_by_pairs_all(
-        #     spike_times, filter_membership_sub, batch_size=None, verbose=False)
-        # model_hat = self.jittertool.bivariate_continuous_time_coupling_filter_regression(
-        #     spike_times_x, spike_times_y, trial_window, model_par, mute_warning=True)
-        # print(neuron_pair, 'done')
-        # return neuron_pair, model_hat
-
       for i, neuron_pair in enumerate(filter_membership.index):
         if i > 30:
           break
-        # out = runner(neuron_pair)
-        # get_results(out)
+
+        filter_membership_sub = filter_membership.loc[[(neuron_x,neuron_y)],:]
+        spike_times_x, spike_times_y = self.stack_spike_times_by_pairs_all(
+            spike_times, filter_membership_sub, batch_size=None, verbose=False)
 
         pool.apply_async(self.pairwise_bivariate_regression_runner,
-            args=(neuron_pair,), callback=get_results)
+            args=(neuron_pair, filter_membership_sub, spike_times_x, spike_times_y,
+                trial_window, model_par),
+            callback=get_results)
 
         # res = pool.apply_async(self.runner, args=(neuron_pair,)).get()
         # print(res)
@@ -1632,6 +1660,39 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
               model_list[-1][1], ylim=[-10, 10])
 
     return model_list
+
+
+  def pairwise_bivariate_regression_inference(
+      self,
+      model_list,
+      filter_membership):
+    """Inference for the output from `pairwise_bivariate_regression`."""
+    selected_units = self.selected_units
+    df_inference = pd.DataFrame(index=filter_membership.index)
+    df_inference.index.names = ['source', 'target']
+
+    for m, (neuron_pair, model_par) in enumerate(model_list):
+        pval = self.jittertool.bivariate_continuous_time_coupling_filter_regression_inference_single(model_par)
+        df_inference.loc[neuron_pair, 'pval'] = pval
+        num_nuisance = len(model_par['append_nuisance'])
+        df_inference.loc[neuron_pair, 'h'] = model_par['beta'][num_nuisance,0]
+
+    # display(df_inference)
+    # display(df_inference[df_inference.pval<1e-4])
+    df_inference = df_inference.reset_index()
+    df_inference = pd.merge(df_inference, selected_units[['probe_description']], left_on='source', right_on='unit_id')
+    df_inference = df_inference.rename(columns={'probe_description': 'source_probe'})
+    df_inference = pd.merge(df_inference, selected_units[['probe_description']], left_on='target', right_on='unit_id')
+    df_inference = df_inference.rename(columns={'probe_description': 'target_probe'})
+
+    df_inference = pd.merge(df_inference, selected_units[['ecephys_structure_acronym']], left_on='source', right_on='unit_id')
+    df_inference = df_inference.rename(columns={'ecephys_structure_acronym': 'source_area'})
+    df_inference = pd.merge(df_inference, selected_units[['ecephys_structure_acronym']], left_on='target', right_on='unit_id')
+    df_inference = df_inference.rename(columns={'ecephys_structure_acronym': 'target_area'})
+
+    df_inference = df_inference.set_index(['source','target'])
+    return df_inference
+
 
 
   # Warning: this is for group-wise fitting.

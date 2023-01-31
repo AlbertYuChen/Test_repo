@@ -617,6 +617,9 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
           frac=(1-select_ratio), random_state=3)
       df_inference.loc[hide_edges.index] = False
 
+    print('edge stats:\n', df_inference.significant.value_counts())
+    print(df_inference[df_inference.significant].h.value_counts(bins=[-1e10,0,1e10]))
+
     return df_inference
 
 
@@ -649,7 +652,8 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
             continue
 
         (unit_x, unit_y) = key
-        graph.add_weighted_edges_from([(unit_x, unit_y, 1)])
+        edge_weight = 1 if df_inference.loc[key].h > 0 else -1
+        graph.add_weighted_edges_from([(unit_x, unit_y, edge_weight)])
 
     # Add information after building the graph.
     for v in graph:
@@ -868,7 +872,9 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
           (0, 0),
           nxviz.geometry.get_cartesian(plot_radius, end_theta),
       ]
-      color = edge_colors[i]
+      # color = edge_colors[i]
+      color = 'red' if graph.get_edge_data(start, end)['weight'] > 0 else 'blue'
+
       codes = [matplotlib.path.Path.MOVETO, matplotlib.path.Path.CURVE3,
                matplotlib.path.Path.CURVE3]
       lw = edge_widths[i]

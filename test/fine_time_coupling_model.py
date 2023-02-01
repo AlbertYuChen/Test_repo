@@ -623,10 +623,164 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
     return df_inference
 
 
+  def build_graph_probe_connection(
+      self,
+      df_probe,
+      layout_probe,
+      graph_template=None,
+      figure_path=None,
+      verbose=False):
+    """Plot pairs of units.
+
+    Args:
+      layout_probe: should be in order.
+    """
+    # graph = nx.Graph(name='probe connections')
+    graph = nx.DiGraph(name='probe connections')
+
+    # Add nodes layout.
+    for n, p in enumerate(layout_probe):
+      graph.add_node(p, probe=p)
+
+    # Add edges.
+    for key in df_probe.index:
+      (unit_x, unit_y) = key
+      edge_weight = df_probe.loc[key].significant
+      graph.add_weighted_edges_from([(unit_x, unit_y, edge_weight)])
+
+    # Add information after building the graph.
+    for v in graph:
+      # graph.nodes[v]['degree'] = graph.degree(v)
+      graph.nodes[v]['degree'] = 1.0
+
+    # Plot chord graph.
+    # self.plot_chord_diagram(graph, graph_template=graph_template, figure_path=figure_path)
+
+
+    probe_color = {'probeA': 'tab:blue', 'probeB': 'tab:orange',
+        'probeC': 'tab:green', 'probeD': 'tab:red', 'probeE': 'tab:purple',
+        'probeF': 'tab:gray'}
+
+    nodes = list(graph.nodes())  # List of node keys (val not included).
+    nodeprops = {'radius': 1}
+    node_r = nodeprops['radius']
+    radius = nxviz.geometry.circos_radius(len(nodes), node_r)
+    nodeprops["linewidth"] = radius * 0.01
+    plot_radius = radius
+    edge_colors = ['black'] * len(graph.edges())
+    edge_widths = [1] * len(graph.edges())
+    edgeprops = {"facecolor": "none", "alpha": 0.2}
+
+    # Nodes order.
+    probe_rank = {p:i for i, p in enumerate(layout_probe)}
+
+    if graph_template is None:
+      nodes_sorted = sorted(graph.nodes(data=True),
+                            key=lambda x: x[1]['degree'], reverse=True)
+      # nodes_sorted = sorted(nodes_sorted, key=lambda x: x[1]['probe'])
+    else:
+      nodes_sorted = sorted(graph_template.nodes(data=True),
+                            key=lambda x: x[1]['degree'], reverse=True)
+      # nodes_sorted = sorted(nodes_sorted, key=lambda x: x[1]['probe'])
+
+    nodes_sorted = sorted(nodes_sorted, key=lambda x: probe_rank[x[1]['probe']])
+    nodes = [key for key, val in nodes_sorted]
+
+    # Nodes layout.
+    def node_theta(nodelist, node):
+      # The theta value is in [-pi, pi].
+      i = nodelist.index(node)
+      delta = 2 * np.pi / len(nodelist)
+      theta = i * delta
+      if theta >= np.pi:
+        theta = theta - 2*np.pi
+      return theta
+
+    xs, ys = [], []
+    for node in nodes:
+      x, y = nxviz.geometry.get_cartesian(
+          r=radius, theta=node_theta(nodes, node))
+      xs.append(x)
+      ys.append(y)
+    node_coords = {"x": xs, "y": ys}
+
+    plt.figure(figsize=(5, 5))
+    ax = plt.gca()
+    # Nodes.
+    lw = nodeprops["linewidth"]
+    for i, node in enumerate(nodes):
+      x = node_coords["x"][i]
+      y = node_coords["y"][i]
+      # color = node_colors[i]
+      node_probe = graph.nodes[node]['probe']
+      node_color = probe_color[node_probe]
+
+      # node_patch = matplotlib.patches.Circle((x, y), node_r, lw=lw, color=node_color, zorder=2)
+      node_patch = matplotlib.patches.Circle((x, y), 0.2, lw=0.2, color=node_color, zorder=2)
+      ax.add_patch(node_patch)
+
+    # Edges.
+    for i, (start, end) in enumerate(graph.edges()):
+      start_theta = node_theta(nodes, start)
+      end_theta = node_theta(nodes, end)
+
+      verts = [
+        nxviz.geometry.get_cartesian(plot_radius, start_theta),
+        (0, 0),
+        nxviz.geometry.get_cartesian(plot_radius, end_theta),
+      ]
+
+      color = edge_colors[i]
+      # color = 'red' if graph.get_edge_data(start, end)['weight'] > 0 else 'blue'
+      edge_weight = graph.get_edge_data(start, end)['weight']
+
+      codes = [matplotlib.path.Path.MOVETO, matplotlib.path.Path.CURVE3,
+               matplotlib.path.Path.CURVE3]
+      lw = edge_widths[i]
+      path = matplotlib.path.Path(verts, codes)
+
+      patch = matplotlib.patches.PathPatch(
+          path, lw=edge_weight, edgecolor=color, zorder=1, **edgeprops)
+      ax.add_patch(patch)
+
+      # arrowstyle = f'fancy,head_length={50},head_width={10},tail_width={2}'
+      # arrow = matplotlib.patches.FancyArrowPatch(path=path, lw=edge_weight,
+      #     edgecolor=color, arrowstyle=arrowstyle, **edgeprops )
+      # ax.add_artist(arrow)
+
+
+    # Labels.
+    map_probe_to_areas = self.session.map_probe_to_ecephys_structure_acronym(
+        visual_only=True)
+    print(map_probe_to_areas)
+    map_probe_to_areas = {'probeA': 'AM', 'probeB': 'AM', 'probeC': 'V1',
+        'probeD': 'LM', 'probeE': 'AL', 'probeF': 'RL'}
+    probe_label_cnt = {'probeA': 0, 'probeB': 0, 'probeC': 0, 'probeD': 0,
+        'probeE': 0, 'probeF': 0}
+    for i, node in enumerate(nodes):
+      node_probe = graph.nodes[node]['probe']
+      probe_label_cnt[node_probe] += 1
+      if probe_label_cnt[node_probe] == 1:
+        theta=node_theta(nodes, node) + 0.2
+        x, y = nxviz.geometry.get_cartesian(r=radius*1.08, theta=theta)
+        deg = theta / np.pi * 180 - 90
+        deg = deg - 180 if theta < 0 else deg
+        ax.text(x, y, map_probe_to_areas[node_probe],
+                rotation=deg, ha='center', va='center', fontsize=12)
+
+    ax.relim()
+    ax.autoscale_view()
+    ax.set_aspect("equal")
+    ax.axis('off')
+
+    return graph
+
+
   def build_graph_from_regression_pval(
       self,
       df_inference,
       layout_units=None,
+      layout_probe=None,
       graph_template=None,
       figure_path=None,
       verbose=False):
@@ -660,7 +814,8 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
         graph.nodes[v]['degree'] = graph.degree(v)
 
     # Plot chord graph.
-    self.plot_chord_diagram(graph, graph_template=graph_template, figure_path=figure_path)
+    self.plot_chord_diagram(graph, layout_probe=layout_probe,
+        graph_template=graph_template, figure_path=figure_path)
     return graph
 
 
@@ -794,6 +949,7 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
   def plot_chord_diagram(
       self,
       graph,
+      layout_probe=None,
       graph_template=None,
       figure_path=None):
     """Plot circular graph.
@@ -819,15 +975,16 @@ class FineTimeCouplingModel(data_model.AllenInstituteDataModel):
     if graph_template is None:
       nodes_sorted = sorted(graph.nodes(data=True),
                             key=lambda x: x[1]['degree'], reverse=True)
-      nodes_sorted = sorted(nodes_sorted,
-                            key=lambda x: x[1]['probe'])
-      nodes = [key for key, val in nodes_sorted]
     else:
       nodes_sorted = sorted(graph_template.nodes(data=True),
                             key=lambda x: x[1]['degree'], reverse=True)
-      nodes_sorted = sorted(nodes_sorted,
-                            key=lambda x: x[1]['probe'])
-      nodes = [key for key, val in nodes_sorted]
+
+    if layout_probe is None:
+      nodes_sorted = sorted(nodes_sorted, key=lambda x: x[1]['probe'])
+    else:
+      probe_rank = {p:i for i, p in enumerate(layout_probe)}
+      nodes_sorted = sorted(nodes_sorted, key=lambda x: probe_rank[x[1]['probe']])
+    nodes = [key for key, val in nodes_sorted]
 
     # Nodes layout.
     def node_theta(nodelist, node):

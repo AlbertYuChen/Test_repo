@@ -2094,8 +2094,8 @@ class HierarchicalModelGenerator(HierarchicalSamplingModel):
     for target in range(num_nodes):
       for source in range(num_nodes):
         spikes = np.array(spike_times[source])
-        # spikes = spikes[(spikes < s)]
-        spikes = spikes[((s - 50/beta[target,source]) < spikes) & (spikes < s)]
+        spikes = spikes[(spikes < s)]
+        # spikes = spikes[((s - 50/beta[target,source]) < spikes) & (spikes < s)]
         if len(spikes) == 0:
           continue
         delays = s - spikes
@@ -3957,16 +3957,19 @@ class HierarchicalModelGenerator(HierarchicalSamplingModel):
         x = np.arange(0, trial_length, 0.0001)
         y = intensity_func(x)
         gs_kw = dict(width_ratios=[1], height_ratios=[1])
-        fig, axs = plt.subplots(figsize=(7, 3), gridspec_kw=gs_kw,
+        fig, axs = plt.subplots(figsize=(5, 2.5), gridspec_kw=gs_kw,
             nrows=1, ncols=1)
         plt.subplots_adjust(hspace=0, wspace=0)
         ax = fig.add_subplot(axs)
         # ax.tick_params(labelbottom=False)
-        plt.plot(intensity_max_x, intensity_max, 'r+', ms=12)
-        plt.plot(x, y.T)
+        # plt.plot(intensity_max_x, intensity_max, 'r+', ms=12)
+
+        plt.plot(x, y[0], 'k')
+        plt.plot(x, y[1], 'b')
         plt.xlim(0, trial_length)
         plt.ylim(0, intensity_max+20)
         plt.ylabel('Firing rate [spk/sec]')
+        plt.xlabel('Time [sec]')
         plt.grid()
 
       if verbose == 1:

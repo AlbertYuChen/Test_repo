@@ -3362,7 +3362,8 @@ class JitterTool(object):
       for spk_y in spikes_y:
         spk_cnt = spk_cnt + 1
         delays = spk_y - spikes_x
-        delays = delays[(delays>=0) & (delays<=filter_length)]
+        # Can't use delays>=0, don't include current spike.
+        delays = delays[(delays>0) & (delays<=filter_length)]
         X[spk_cnt] = len(delays)
 
     # Get the integral.
@@ -3403,6 +3404,7 @@ class JitterTool(object):
       for spk_y in spikes_y:
         spk_cnt = spk_cnt + 1
         delays = spk_y - spikes_x
+        # Can't use delays>=0, don't include current spike.
         delays = delays[(delays>0) & (delays<=filter_length)]
         if len(delays) == 0:
           continue
@@ -3452,8 +3454,17 @@ class JitterTool(object):
       for spk_y in spikes_y:
         spk_cnt = spk_cnt + 1
         delays = spk_y - spikes_x
+<<<<<<< HEAD
+        # Can't use delays>=0, don't include current spike.
+        delays = delays[(delays>0)]
+        if len(delays) == 0:
+          X[spk_cnt] = 0
+        else:
+          X[spk_cnt] = np.exp(-beta*delays).sum()
+=======
         delays = delays[(delays>0)]
         X[spk_cnt] = np.exp(-beta*delays).sum()
+>>>>>>> ef55af5921e517f5d2b190ac00779c5b695fe467
 
       # Get the integral.
       trial_integral = 1/beta*(1-np.exp(-beta*(trial_window[1]-spikes_x)))
@@ -3466,6 +3477,58 @@ class JitterTool(object):
     return X, basis_integral
 
 
+<<<<<<< HEAD
+  @classmethod
+  def construct_regressors_exp_derivative(
+      cls,
+      spike_times_x,
+      spike_times_y,
+      beta,
+      trial_window=None,
+      verbose=False):
+    """Build GLM regressors using square basis.
+
+    We assume the spike_times are already in the trial window, no need to clip
+    them further.
+    """
+    num_trials = len(spike_times_x)
+    num_spikes_x = [len(spikes) for spikes in spike_times_x]
+    num_spikes_x = np.sum(num_spikes_x)
+    num_spikes_y = [len(spikes) for spikes in spike_times_y]
+    num_spikes_y = np.sum(num_spikes_y)
+    trial_length = trial_window[1] - trial_window[0]
+
+    X = np.zeros([num_spikes_y, 1])
+    delay_basis = np.zeros(num_spikes_y)
+    spk_cnt = -1
+    basis_integral = 0
+    delay_integral = 0
+    for r in range(num_trials):
+      spikes_x = spike_times_x[r]
+      spikes_y = spike_times_y[r]
+
+      for spk_y in spikes_y:
+        spk_cnt = spk_cnt + 1
+        delays = spk_y - spikes_x
+        # Can't use delays>=0, don't include current spike.
+        delays = delays[(delays>0)]
+        if len(delays) == 0:
+          X[spk_cnt] = 0
+          delay_basis[spk_cnt] = 0
+        else:
+          X[spk_cnt] = np.exp(-beta*delays).sum()
+          delay_basis[spk_cnt] = np.sum(delays * np.exp(-beta*delays))
+
+      # Get the integral.
+      trial_integral = 1/beta*(1-np.exp(-beta*(trial_window[1]-spikes_x)))
+      basis_integral += trial_integral.sum()
+      d_int = (trial_window[1]-spikes_x) * np.exp(-beta*(trial_window[1]-spikes_x))
+      delay_integral += d_int.sum()
+
+    return X, basis_integral, delay_basis, delay_integral
+
+=======
+>>>>>>> ef55af5921e517f5d2b190ac00779c5b695fe467
 
   @classmethod
   def compare_nuisance_regressor_baseline(
@@ -3912,7 +3975,7 @@ class JitterTool(object):
     """Bivariate continuous-time PP-GLM."""
     num_trials = len(spike_times_y)
 
-    # Basis design.
+    # Cross-coupling filter.
     if 'filter_type' not in model_par or model_par['filter_type'] == 'none':
       num_spikes_y = [len(spikes) for spikes in spike_times_y]
       num_spikes_y = np.sum(num_spikes_y)
@@ -3945,6 +4008,128 @@ class JitterTool(object):
       num_spikes_y = [len(spikes) for spikes in spike_times_y]
       num_spikes_y = np.sum(num_spikes_y)
       X, basis_integral = np.empty([num_spikes_y,0]), np.empty(0)
+
+    num_samples, num_basis = X.shape
+    model_par['num_samples'] = num_samples
+    model_par['num_basis'] = num_basis
+
+    # Append nuisance variable.
+    if 'jitter_mean' in model_par['append_nuisance']:
+      jitter_window_width = model_par['jitter_window_width']
+      # TODO: make trial_length into trial_window.
+      nuisance, nuisance_integral = cls.construct_regressors_jitter_mean(
+          spike_times_x, spike_times_y, trial_window[1], jitter_window_width)
+      X = np.hstack([nuisance, X])
+      basis_integral = np.hstack([nuisance_integral, basis_integral])
+      num_basis = num_basis + 1
+      model_par['num_basis'] = num_basis
+    if 'square_kernel' in model_par['append_nuisance']:
+      kernel_width = model_par['kernel_width']
+      nuisance, nuisance_integral = cls.construct_regressors_square_kernel(
+          spike_times_x, spike_times_y, kernel_width,
+          trial_window=trial_window, mean_norm=mean_norm)
+      X = np.hstack([nuisance, X])
+      basis_integral = np.hstack([nuisance_integral, basis_integral])
+      num_basis = num_basis + 1
+      model_par['num_basis'] = num_basis
+    if 'triangle_kernel' in model_par['append_nuisance']:
+      kernel_width = model_par['kernel_width']
+      nuisance, nuisance_integral = cls.construct_regressors_triangle_kernel(
+          spike_times_x, spike_times_y, kernel_width,
+          trial_window=trial_window, mean_norm=mean_norm)
+      X = np.hstack([nuisance, X])
+      basis_integral = np.hstack([nuisance_integral, basis_integral])
+      num_basis = num_basis + 1
+      model_par['num_basis'] = num_basis
+    if 'laplacian_kernel' in model_par['append_nuisance']:
+      kernel_width = model_par['kernel_width']
+      nuisance, nuisance_integral = cls.construct_regressors_laplacian_kernel(
+          spike_times_x, spike_times_y, kernel_width)
+      X = np.hstack([nuisance, X])
+      basis_integral = np.hstack([nuisance_integral, basis_integral])
+      num_basis = num_basis + 1
+      model_par['num_basis'] = num_basis
+    if 'gaussian_kernel' in model_par['append_nuisance']:
+      kernel_width = model_par['kernel_width']
+      nuisance, nuisance_integral = cls.construct_regressors_gaussian_kernel(
+          spike_times_x, spike_times_y, kernel_width,
+          trial_window=trial_window, mean_norm=mean_norm)
+      X = np.hstack([nuisance, X])
+      basis_integral = np.hstack([nuisance_integral, basis_integral])
+      num_basis = num_basis + 1
+      model_par['num_basis'] = num_basis
+    # This has to be the convention that the constant nuisance is
+    # always at the beginning. It is related to the initialization.
+    if 'const' in model_par['append_nuisance']:
+      nuisance = np.ones([num_samples, 1])
+      nuisance_integral = np.zeros(1) + (trial_window[1]-trial_window[0]) * num_trials
+      X = np.hstack([nuisance, X])
+      basis_integral = np.hstack([nuisance_integral, basis_integral])
+      num_basis = num_basis + 1
+      model_par['num_basis'] = num_basis
+
+    basis_integral = basis_integral.reshape(-1,1)
+
+    # Baseline constant offset.
+    offset = model_par['const_offset']
+    offset_integral = offset * (trial_window[1]-trial_window[0]) * num_trials
+    # Set filter basis as offset.
+    if ('filter_type' in model_par and model_par['filter_type'] != 'none' and
+        'fix_filter' in model_par and model_par['fix_filter']):
+      num_nuisance = len(model_par['append_nuisance'])
+      beta_filter = model_par['beta_fix'][num_nuisance:]
+      offset += X_filter @ beta_filter
+      # Vec x Vec.
+      offset_integral += np.dot(basis_integral_filter, beta_filter)[0]
+
+    return num_basis, num_samples, X, basis_integral, offset, offset_integral
+
+
+  # TODO: merge similar functions.
+  @classmethod
+  def bivariate_continuous_time_coupling_filter_self_coupling_build_regressors(
+      cls,
+      spike_times_x,
+      spike_times_y,
+      trial_window,
+      model_par,
+      mean_norm=True):
+    """Bivariate continuous-time PP-GLM."""
+    num_trials = len(spike_times_y)
+
+    # Cross-coupling filter.
+    if 'filter_type' not in model_par or model_par['filter_type'] == 'none':
+      num_spikes_y = [len(spikes) for spikes in spike_times_y]
+      num_spikes_y = np.sum(num_spikes_y)
+      X, basis_integral = np.empty([num_spikes_y,0]), np.empty(0)
+    elif model_par['filter_type'] == 'bspline':
+      X, basis_integral, tck = cls.construct_regressors_bspline(
+          spike_times_x, spike_times_y, num_knots=model_par['num_knots'],
+          filter_length=model_par['filter_length'],
+          space_par=model_par['knot_space_par'],
+          num_tail_drop=model_par['num_tail_drop'], verbose=False)
+      model_par['tck'] = tck
+    elif model_par['filter_type'] == 'square':
+      X, basis_integral = cls.construct_regressors_square(
+          spike_times_x, spike_times_y, filter_length=model_par['filter_length'],
+          trial_length=None,  # trial_window[1]-trial_window[0],
+          trial_window=trial_window, mean_norm=True, verbose=False)
+    elif model_par['filter_type'] == 'const':
+      X, basis_integral = cls.construct_regressors_const(
+          spike_times_x, spike_times_y, trial_window, verbose=False)
+    elif model_par['filter_type'] == 'exp':
+      X, basis_integral = cls.construct_regressors_exp(
+          spike_times_x, spike_times_y, model_par['filter_beta'],
+          trial_length=None, trial_window=trial_window, verbose=False)
+
+    # Self coupling filter.
+    if model_par['self_filter_type'] == 'square':
+      X_filter, X_integral = cls.construct_regressors_square(
+          spike_times_y, spike_times_y, filter_length=model_par['self_filter_length'],
+          trial_length=None,  # assuming trial_window[1]-trial_window[0],
+          trial_window=trial_window, mean_norm=True, verbose=False)
+      X = np.hstack([X, X_filter])
+      basis_integral = np.hstack([basis_integral, X_integral])
 
     num_samples, num_basis = X.shape
     model_par['num_samples'] = num_samples
@@ -4087,6 +4272,108 @@ class JitterTool(object):
     else:
       (num_basis, num_samples, X, basis_integral, offset, offset_integral
           ) = cls.bivariate_continuous_time_coupling_filter_build_regressors(
+          spike_times_x, spike_times_y, trial_window, model_par, mean_norm=True)
+
+    # Beta offset.
+    if 'beta_offset' in model_par:
+      beta_offset = model_par['beta_offset']
+    else:
+      beta_offset = 0
+
+    # Initialize parameters.
+    if 'beta_init' in model_par:
+      beta = model_par['beta_init'].copy()
+    elif model_par['append_nuisance'] == 'const':
+      beta = np.zeros([num_basis, 1]) + 1
+      # Mean FR.
+      beta[0] = num_samples / num_trials / (trial_window[1]-trial_window[0])
+    elif 'const' in model_par['append_nuisance']:
+      beta = np.zeros([num_basis, 1]) + 0.1
+      beta[0] = num_samples / num_trials / (trial_window[1]-trial_window[0])
+    else:
+      beta = np.zeros([num_basis, 1]) + 0.1
+
+    beta_old = beta
+    if verbose:
+      print('num_trials', num_trials)
+      print(f'X.shape {X.shape}, basis_integral.shape {basis_integral.shape},' +
+            f'beta.shape{beta.shape}')
+
+    if hasattr(tqdm, '_instances'):
+      tqdm._instances.clear()
+    if verbose:
+      trange = tqdm(range(max_num_itrs), ncols=100, file=sys.stdout)
+    else:
+      trange =range(max_num_itrs)
+    for itr in trange:
+      lmbd = X @ (beta + beta_offset) + offset
+      non_zero_ind = np.where(lmbd > 0)[0]
+      lmbd_integral = basis_integral.T @ (beta + beta_offset) + offset_integral
+      nll = cls.spike_times_neg_log_likelihood(lmbd[non_zero_ind], lmbd_integral)
+      # gradient = - X[non_zero_ind].T @ (1 / lmbd[non_zero_ind]) + basis_integral
+      # hessian = X[non_zero_ind].T @ (X[non_zero_ind] / np.square(lmbd[non_zero_ind]))
+      vec = X[non_zero_ind] / lmbd[non_zero_ind]
+      gradient = - np.sum(vec, axis=0, keepdims=True).T + basis_integral
+      hessian = vec.T @ vec
+
+      # Newton's method.
+      try:
+        delta = np.linalg.inv(hessian) @ gradient
+      except np.linalg.LinAlgError:
+        hessian = hessian + np.eye(hessian.shape[0])*0.01
+        delta = np.linalg.inv(hessian) @ gradient
+      # Gradient descent.
+      # delta = 0.0001*gradient
+
+      # The threshold is set as 5 because we know the range of the optimal beta
+      # is around 10.
+      if any(np.abs(learning_rate*delta) > 5):
+        lr = learning_rate * 0.2
+        learning_rate = max(lr, 0.001)
+      beta = beta - learning_rate * delta
+
+      # Check convergence.
+      beta_err = np.sum(np.abs(beta_old - beta))
+      if beta_err < epsilon:
+        break
+      beta_old = beta
+
+    if not mute_warning and itr == max_num_itrs-1 and max_num_itrs > 1:
+      warnings.warn(f'Reach max itrs {max_num_itrs}. Last err:{beta_err:.3e}')
+      model_par['warnings'] = 'itr_max'
+
+    model_par['beta'] = beta
+    model_par['beta_hessian'] = hessian
+    model_par['num_itrs'] = itr
+    model_par['nll'] = nll[0,0]
+    if verbose:
+      print('gradient', gradient.reshape(-1))
+      print('num itr', itr, nll, beta_err)
+      print('beta', beta.reshape(-1))
+
+    return model_par.copy()
+
+
+  @classmethod
+  def bivariate_continuous_time_coupling_filter_full_regression(
+      cls,
+      spike_times_x,
+      spike_times_y,
+      trial_window,
+      model_par=None,
+      mute_warning=False,
+      cache=None,
+      verbose=False):
+    """Add self-coupling component so called FULL."""
+    num_trials = len(spike_times_y)
+    learning_rate = model_par['learning_rate']
+    max_num_itrs = model_par['max_num_itrs']
+    epsilon = model_par['epsilon']
+    if cache is not None:
+      num_basis, num_samples, X, basis_integral, offset, offset_integral = cache
+    else:
+      (num_basis, num_samples, X, basis_integral, offset, offset_integral
+          ) = cls.bivariate_continuous_time_coupling_filter_self_coupling_build_regressors(
           spike_times_x, spike_times_y, trial_window, model_par, mean_norm=True)
 
     # Beta offset.
@@ -4369,6 +4656,10 @@ class JitterTool(object):
       spike_times_y,
       trial_window,
       model_par=None,
+<<<<<<< HEAD
+      update_gamma_only=False,
+=======
+>>>>>>> ef55af5921e517f5d2b190ac00779c5b695fe467
       mute_warning=False,
       verbose=False):
     """Do actual regression for kernel width search.
@@ -4407,15 +4698,34 @@ class JitterTool(object):
     if hasattr(tqdm, '_instances'):
       tqdm._instances.clear()
     if verbose:
+<<<<<<< HEAD
+      trange = tqdm(range(max_num_itrs), ncols=80, file=sys.stdout)
+=======
       trange = tqdm(range(max_num_itrs), ncols=100, file=sys.stdout)
+>>>>>>> ef55af5921e517f5d2b190ac00779c5b695fe467
     else:
       trange =range(max_num_itrs)
     for itr in trange:
       # As gamma is updated, need to rebuild X every time.
+<<<<<<< HEAD
+      # Don't need to rebuild all basis, only the exp basis.
+      # model_par_tmp = model_par.copy()
+      # model_par['filter_beta'] = gamma
+      # (num_basis, num_samples, X, basis_integral, offset, offset_integral
+      #     ) = cls.bivariate_continuous_time_coupling_filter_build_regressors(
+      #     spike_times_x, spike_times_y, trial_window, model_par, mean_norm=False)
+
+      (X_exp, X_exp_integral, delay_basis, delay_integral
+          ) = cls.construct_regressors_exp_derivative(
+          spike_times_x, spike_times_y, gamma, trial_window, verbose=False)
+      X[:,num_nuisance] = X_exp.reshape(-1)
+      basis_integral[num_nuisance,0] = X_exp_integral
+=======
       model_par['filter_beta'] = gamma
       (num_basis, num_samples, X, basis_integral, offset, offset_integral
           ) = cls.bivariate_continuous_time_coupling_filter_build_regressors(
           spike_times_x, spike_times_y, trial_window, model_par, mean_norm=False)
+>>>>>>> ef55af5921e517f5d2b190ac00779c5b695fe467
 
       lmbd = X @ beta
       # print('lmbd neg', len(lmbd[lmbd<=0]))
@@ -4433,6 +4743,30 @@ class JitterTool(object):
       #   hessian = hessian + np.eye(hessian.shape[0])*0.01
       #   delta = np.linalg.inv(hessian) @ gradient
       # Gradient descent.
+<<<<<<< HEAD
+      delta = np.zeros_like(gradient) if update_gamma_only else gradient
+
+      # Gradient of gamma
+      alpha_h = beta[num_nuisance,0]
+      gamma_gradien_spk = alpha_h * delay_basis[non_zero_ind]/lmbd[non_zero_ind].reshape(-1)
+      gamma_integral = -alpha_h/gamma*X_exp_integral + alpha_h/gamma*delay_integral
+      gamma_gradien = gamma_gradien_spk.sum() + gamma_integral
+
+      # The threshold is set as 5.
+      if any(np.abs(learning_rate*delta) > 5):
+        lr = learning_rate * 0.2
+        learning_rate = max(lr, 0.001)
+
+      beta = beta - learning_rate * delta
+      gamma = gamma - 5*learning_rate*gamma_gradien
+      print('---', gamma, gamma_gradien)
+      if verbose:
+        trange.set_description(f'gamma {gamma:.3f}')
+
+      # Check convergence.
+      beta_err = np.sum(np.abs(beta_old - beta))
+      if beta_err < epsilon and not update_gamma_only:
+=======
       delta = gradient
 
       # Gradient of gamma
@@ -4458,6 +4792,7 @@ class JitterTool(object):
       # Check convergence.
       beta_err = np.sum(np.abs(beta_old - beta))
       if beta_err < epsilon:
+>>>>>>> ef55af5921e517f5d2b190ac00779c5b695fe467
         break
       beta_old = beta
 
@@ -4937,7 +5272,11 @@ class JitterTool(object):
       filter_alpha = filter_par['alpha'][0][1]
       filter_beta = filter_par['beta'][0][1]
       # plt.plot([0, filter_beta], [filter_alpha, filter_alpha], 'g', label='True filter')
+<<<<<<< HEAD
+      t = np.linspace(0, 0.07, 20000)
+=======
       t = np.arange(0, 0.07,0.001)
+>>>>>>> ef55af5921e517f5d2b190ac00779c5b695fe467
       y = np.zeros_like(t)
       y[t<=filter_beta] = filter_alpha
       plt.plot(t, y, 'g', label='True filter')
@@ -5220,6 +5559,75 @@ class JitterTool(object):
       X, basis_integral = cls.construct_regressors_square_discrete(
           spike_hist_x, dt, filter_length=model_par['filter_length'],
           trial_length=trial_length, mean_norm=True, verbose=False)
+
+    num_samples, num_basis = X.shape
+    model_par['num_samples'] = num_samples
+    model_par['num_basis'] = num_basis
+
+    # Append nuisance variable.
+    if 'triangle_kernel' in model_par['append_nuisance']:
+      kernel_width = model_par['kernel_width']
+      nuisance, nuisance_integral = cls.construct_regressors_triangle_kernel_discrete(
+          spike_hist_x, dt, kernel_width, trial_length=trial_length,
+          mean_norm=mean_norm)
+      X = np.hstack([nuisance, X])
+      basis_integral = np.hstack([nuisance_integral, basis_integral])
+      num_basis = num_basis + 1
+      model_par['num_basis'] = num_basis
+    if 'gaussian_kernel' in model_par['append_nuisance']:
+      kernel_width = model_par['kernel_width']
+      nuisance, nuisance_integral = cls.construct_regressors_gaussian_kernel_discrete(
+          spike_hist_x, dt, kernel_width, trial_length=trial_length,
+          mean_norm=mean_norm)
+      X = np.hstack([nuisance, X])
+      basis_integral = np.hstack([nuisance_integral, basis_integral])
+      num_basis = num_basis + 1
+      model_par['num_basis'] = num_basis
+    # This has to be the convention that the constant nuisance is
+    # always at the beginning. It is related to the initialization.
+    if 'const' in model_par['append_nuisance']:
+      nuisance = np.ones([num_samples, 1])
+      nuisance_integral = np.zeros(1) + trial_length * num_trials
+      X = np.hstack([nuisance, X])
+      basis_integral = np.hstack([nuisance_integral, basis_integral])
+      num_basis = num_basis + 1
+      model_par['num_basis'] = num_basis
+
+    basis_integral = basis_integral.reshape(-1,1)
+    return num_basis, num_samples, X, basis_integral, 0, 0
+
+
+  @classmethod
+  def bivariate_discrete_time_coupling_filter_self_coupling_build_regressors(
+      cls,
+      spike_hist_x,
+      spike_hist_y,
+      trial_window,
+      model_par,
+      mean_norm=True):
+    """Bivariate continuous-time PP-GLM."""
+    num_trials, num_bins = spike_hist_x.shape
+    dt = model_par['dt']
+    trial_length = trial_window[1]
+
+    # Basis design.
+    if 'filter_type' not in model_par or model_par['filter_type'] == 'none':
+      num_bins = num_bins * num_trials
+      X, basis_integral = np.empty([num_bins,0]), np.empty(0)
+    elif model_par['filter_type'] == 'bspline':
+      X, basis_integral = cls.construct_regressors_bspline_discrete(
+          spike_hist_x, dt, filter_par=model_par, mean_norm=False, verbose=False)
+    elif model_par['filter_type'] == 'square':
+      X, basis_integral = cls.construct_regressors_square_discrete(
+          spike_hist_x, dt, filter_length=model_par['filter_length'],
+          trial_length=trial_length, mean_norm=True, verbose=False)
+
+    if model_par['self_filter_type'] == 'square':
+      X_filter, X_integral = cls.construct_regressors_square_discrete(
+          spike_hist_y, dt, filter_length=model_par['self_filter_length'],
+          trial_length=trial_length, mean_norm=True, verbose=False)
+      X = np.hstack([X, X_filter])
+      basis_integral = np.hstack([basis_integral, X_integral])
 
     num_samples, num_basis = X.shape
     model_par['num_samples'] = num_samples
@@ -6292,6 +6700,467 @@ class JitterTool(object):
       plt.savefig(file_path)
       print('save figure:', file_path)
     plt.show()
+
+    # ------------------ alpha_h ------------------
+    rmse_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    log_likelihood_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    min_rmse_kernel_width = np.zeros(len(sigma_Is))
+    max_ll_kernel_width = np.zeros(len(sigma_Is))
+
+    par_input = par.copy()
+    for ind, alpha_h in enumerate(alpha_hs):
+      par_input['alpha'][0][1] = alpha_h
+      bias_list = np.zeros_like(kernel_widths)
+      var_list = np.zeros_like(kernel_widths)
+      ll_list = np.zeros_like(kernel_widths)
+      for i, kernel_width in enumerate(kernel_widths):
+        par_input['kernel_width'] = kernel_width
+        bias_list[i], _, _ = cls.bias_theoretical(par_input)
+        var_list[i] = cls.var_theoretical(par_input)
+        ll_list[i] = cls.log_likelihood_theoretical(par_input)
+      rmse_list[ind] = np.sqrt(var_list + np.square(bias_list))
+      log_likelihood_list[ind] = ll_list - np.max(ll_list)
+      nadir_ind = np.argmin(rmse_list[ind])
+      min_rmse_kernel_width[ind] = kernel_widths[nadir_ind]
+      max_ind = np.argmax(log_likelihood_list[ind])
+      max_ll_kernel_width[ind] = kernel_widths[max_ind]
+
+    gs_kw = dict(width_ratios=[1], height_ratios=[1,1])
+    fig, axs = plt.subplots(figsize=(6, 4.5), gridspec_kw=gs_kw,
+        nrows=2, ncols=1)
+    plt.subplots_adjust(left=None, right=None, hspace=0.2, wspace=0)
+    ax = fig.add_subplot(axs[0])
+    plt.axhline(0, lw=2, color='lightgrey')
+    for i, val in enumerate(alpha_hs):
+      plt.plot(np.log10(kernel_widths)+3, rmse_list[i], style[i], lw=1.2,
+          label=fr'$\alpha_h=${val:.1f} spikes/sec')
+    for v in min_rmse_kernel_width:
+      plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    plt.ylabel('RMSE [spikes/sec]')
+    # plt.xlabel(r'$\sigma_w$ [ms]')
+    plt.xticks(xticks, xticks_label)
+    plt.ylim(0)
+    plt.xlim(xlim)
+    plt.legend(fontsize=8)
+
+    ax = fig.add_subplot(axs[1])
+    for i, val in enumerate(alpha_hs):
+      plt.plot(np.log10(kernel_widths)+3, log_likelihood_list[i],
+          style[i], lw=1.2)
+    for v in max_ll_kernel_width:
+      plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    plt.ylabel('log-likelihood')
+    plt.xlabel(r'$\sigma_w$ [ms]')
+    plt.xticks(xticks, xticks_label)
+    plt.xlim(xlim)
+
+    if output_dir is not None:
+      file_path = output_dir + experiment_name + 'tune_alpha_h.pdf'
+      plt.savefig(file_path)
+      print('save figure:', file_path)
+    plt.show()
+
+
+  @classmethod
+  def plot_bias_rmse_likelihood_theoretical(
+      cls,
+      par,
+      sigma_Is=[0.08,0.1,0.12],
+      sigma_hs=[0.02,0.03,0.04],
+      alpha_hs=[-2,0,2],
+      experiment_name=None,
+      output_dir=None):
+    """Scan the kernel window width."""
+    min_kernel_width, max_kernel_width = par['kernel_width']
+    log_kernel_widths = np.linspace(np.log10(min_kernel_width),
+                                    np.log10(max_kernel_width), 200)
+    kernel_widths = np.power(10, log_kernel_widths)
+    xlim = (-0.2, 3.2)
+    xticks_label = [2, 5, 10, 20, 50, 100, 200, 500, 1000]
+    xticks = np.log10(np.array(xticks_label))
+    xticks = list(xticks)
+    style = ['k', 'b', 'g']
+
+    # ------------------ sigma_I ------------------
+    rmse_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    all_bias_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    log_likelihood_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    min_rmse_kernel_width = np.zeros(len(sigma_Is))
+    max_ll_kernel_width = np.zeros(len(sigma_Is))
+
+    par_input = par.copy()
+    for ind, sigma_I in enumerate(sigma_Is):
+      par_input['background_window_sigma'] = sigma_I
+      bias_list = np.zeros_like(kernel_widths)
+      var_list = np.zeros_like(kernel_widths)
+      ll_list = np.zeros_like(kernel_widths)
+      for i, kernel_width in enumerate(kernel_widths):
+        par_input['kernel_width'] = kernel_width
+        bias_list[i], _, _ = cls.bias_theoretical(par_input)
+        var_list[i] = cls.var_theoretical(par_input)
+        ll_list[i] = cls.log_likelihood_theoretical(par_input)
+      rmse_list[ind] = np.sqrt(var_list + np.square(bias_list))
+      all_bias_list[ind] = bias_list
+      log_likelihood_list[ind] = ll_list - np.max(ll_list)
+      nadir_ind = np.argmin(rmse_list[ind])
+      min_rmse_kernel_width[ind] = kernel_widths[nadir_ind]
+      max_ind = np.argmax(log_likelihood_list[ind])
+      max_ll_kernel_width[ind] = kernel_widths[max_ind]
+
+    gs_kw = dict(width_ratios=[1], height_ratios=[1,1,1])
+    fig, axs = plt.subplots(figsize=(5, 6), gridspec_kw=gs_kw,
+        nrows=3, ncols=1)
+    plt.subplots_adjust(left=None, right=None, hspace=0.2, wspace=0)
+    ax = fig.add_subplot(axs[0])
+    plt.axhline(0, lw=2, color='lightgrey')
+    for i, val in enumerate(sigma_Is):
+      plt.plot(np.log10(kernel_widths)+3, all_bias_list[i], style[i], lw=1.2,
+          label=fr'$\sigma_I=${val*1000:.0f} ms')
+    for v in min_rmse_kernel_width:
+      plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    plt.ylabel('Bias [spikes/sec]')
+    # plt.xlabel(r'$\sigma_w$ [ms]')
+    plt.xticks(xticks, xticks_label)
+    # plt.ylim(-1, 2.5)
+    plt.xlim(xlim)
+    plt.legend(loc=[0.7,0], fontsize=8)
+
+    ax = fig.add_subplot(axs[1])
+    plt.axhline(0, lw=2, color='lightgrey')
+    for i, val in enumerate(sigma_Is):
+      plt.plot(np.log10(kernel_widths)+3, rmse_list[i], style[i], lw=1.2,
+          label=fr'$\sigma_I=${val*1000:.0f} ms')
+    for v in min_rmse_kernel_width:
+      plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    plt.ylabel('RMSE [spikes/sec]')
+    # plt.xlabel(r'$\sigma_w$ [ms]')
+    plt.xticks(xticks, xticks_label)
+    plt.ylim(0)
+    plt.xlim(xlim)
+    # plt.legend(fontsize=8)
+
+    ax = fig.add_subplot(axs[2])
+    for i, val in enumerate(sigma_Is):
+      plt.plot(np.log10(kernel_widths)+3, log_likelihood_list[i],
+          style[i], lw=1.2)
+    for v in max_ll_kernel_width:
+      plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    plt.ylabel('log-likelihood')
+    plt.xlabel(r'$\sigma_w$ [ms]')
+    plt.xticks(xticks, xticks_label)
+    plt.xlim(xlim)
+
+    if output_dir is not None:
+      file_path = output_dir + experiment_name + 'bias_rmse_likeli_tune_sigma_I.pdf'
+      plt.savefig(file_path)
+      print('save figure:', file_path)
+    plt.show()
+
+    # ------------------ sigma_h ------------------
+    rmse_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    all_bias_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    log_likelihood_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    min_rmse_kernel_width = np.zeros(len(sigma_Is))
+    max_ll_kernel_width = np.zeros(len(sigma_Is))
+
+    par_input = par.copy()
+    for ind, sigma_h in enumerate(sigma_hs):
+      par_input['filter_length'] = sigma_h
+      bias_list = np.zeros_like(kernel_widths)
+      var_list = np.zeros_like(kernel_widths)
+      ll_list = np.zeros_like(kernel_widths)
+      for i, kernel_width in enumerate(kernel_widths):
+        par_input['kernel_width'] = kernel_width
+        bias_list[i], _, _ = cls.bias_theoretical(par_input)
+        var_list[i] = cls.var_theoretical(par_input)
+        ll_list[i] = cls.log_likelihood_theoretical(par_input)
+      rmse_list[ind] = np.sqrt(var_list + np.square(bias_list))
+      all_bias_list[ind] = bias_list
+      log_likelihood_list[ind] = ll_list - np.max(ll_list)
+      nadir_ind = np.argmin(rmse_list[ind])
+      min_rmse_kernel_width[ind] = kernel_widths[nadir_ind]
+      max_ind = np.argmax(log_likelihood_list[ind])
+      max_ll_kernel_width[ind] = kernel_widths[max_ind]
+
+    gs_kw = dict(width_ratios=[1], height_ratios=[1,1,1])
+    fig, axs = plt.subplots(figsize=(5, 6), gridspec_kw=gs_kw,
+        nrows=3, ncols=1)
+    plt.subplots_adjust(left=None, right=None, hspace=0.2, wspace=0)
+
+    ax = fig.add_subplot(axs[0])
+    plt.axhline(0, lw=2, color='lightgrey')
+    for i, val in enumerate(sigma_hs):
+      plt.plot(np.log10(kernel_widths)+3, all_bias_list[i], style[i], lw=1.2,
+          label=fr'$\sigma_h=${val*1000:.0f} ms')
+    for v in min_rmse_kernel_width:
+      plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    # plt.ylabel('RMSE [spikes/sec]')
+    # plt.xlabel(r'$\sigma_w$ [ms]')
+    plt.xticks(xticks, xticks_label)
+    # plt.ylim(-1, 2.5)
+    plt.xlim(xlim)
+    plt.legend(loc=[0.7,0], fontsize=8)
+
+    ax = fig.add_subplot(axs[1])
+    plt.axhline(0, lw=2, color='lightgrey')
+    for i, val in enumerate(sigma_hs):
+      plt.plot(np.log10(kernel_widths)+3, rmse_list[i], style[i], lw=1.2,
+          label=fr'$\sigma_h=${val*1000:.0f} ms')
+    for v in min_rmse_kernel_width:
+      plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    # plt.ylabel('RMSE [spikes/sec]')
+    # plt.xlabel(r'$\sigma_w$ [ms]')
+    plt.xticks(xticks, xticks_label)
+    plt.ylim(0)
+    plt.xlim(xlim)
+    # plt.legend(fontsize=8)
+
+    ax = fig.add_subplot(axs[2])
+    for i, val in enumerate(sigma_hs):
+      plt.plot(np.log10(kernel_widths)+3, log_likelihood_list[i],
+          style[i], lw=1.2)
+    for v in max_ll_kernel_width:
+      plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    # plt.ylabel('log-likelihood')
+    plt.xlabel(r'$\sigma_w$ [ms]')
+    plt.xticks(xticks, xticks_label)
+    plt.xlim(xlim)
+
+    if output_dir is not None:
+      file_path = output_dir + experiment_name + 'bias_rmse_likeli_tune_sigma_h.pdf'
+      plt.savefig(file_path)
+      print('save figure:', file_path)
+    plt.show()
+
+    # ------------------ alpha_h ------------------
+    rmse_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    all_bias_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    log_likelihood_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    min_rmse_kernel_width = np.zeros(len(sigma_Is))
+    max_ll_kernel_width = np.zeros(len(sigma_Is))
+
+    par_input = par.copy()
+    for ind, alpha_h in enumerate(alpha_hs):
+      par_input['alpha'][0][1] = alpha_h
+      bias_list = np.zeros_like(kernel_widths)
+      var_list = np.zeros_like(kernel_widths)
+      ll_list = np.zeros_like(kernel_widths)
+      for i, kernel_width in enumerate(kernel_widths):
+        par_input['kernel_width'] = kernel_width
+        bias_list[i], _, _ = cls.bias_theoretical(par_input)
+        var_list[i] = cls.var_theoretical(par_input)
+        ll_list[i] = cls.log_likelihood_theoretical(par_input)
+      rmse_list[ind] = np.sqrt(var_list + np.square(bias_list))
+      all_bias_list[ind] = bias_list
+      log_likelihood_list[ind] = ll_list - np.max(ll_list)
+      nadir_ind = np.argmin(rmse_list[ind])
+      min_rmse_kernel_width[ind] = kernel_widths[nadir_ind]
+      max_ind = np.argmax(log_likelihood_list[ind])
+      max_ll_kernel_width[ind] = kernel_widths[max_ind]
+
+    gs_kw = dict(width_ratios=[1], height_ratios=[1,1,1])
+    fig, axs = plt.subplots(figsize=(5, 6), gridspec_kw=gs_kw,
+        nrows=3, ncols=1)
+    plt.subplots_adjust(left=None, right=None, hspace=0.2, wspace=0)
+
+    ax = fig.add_subplot(axs[0])
+    plt.axhline(0, lw=2, color='lightgrey')
+    for i, val in enumerate(alpha_hs):
+      plt.plot(np.log10(kernel_widths)+3, all_bias_list[i], style[i], lw=1.2,
+          label=fr'$\alpha_h=${val:.1f} spikes/sec')
+    for v in min_rmse_kernel_width:
+      plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    # plt.ylabel('RMSE [spikes/sec]')
+    # plt.xlabel(r'$\sigma_w$ [ms]')
+    plt.xticks(xticks, xticks_label)
+    # plt.ylim(-1, 2.5)
+    plt.xlim(xlim)
+    plt.legend(loc=[0.61,0], fontsize=8)
+
+    ax = fig.add_subplot(axs[1])
+    plt.axhline(0, lw=2, color='lightgrey')
+    for i, val in enumerate(alpha_hs):
+      plt.plot(np.log10(kernel_widths)+3, rmse_list[i], style[i], lw=1.2,
+          label=fr'$\alpha_h=${val:.1f} spikes/sec')
+    for v in min_rmse_kernel_width:
+      plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    # plt.ylabel('RMSE [spikes/sec]')
+    # plt.xlabel(r'$\sigma_w$ [ms]')
+    plt.xticks(xticks, xticks_label)
+    plt.ylim(0)
+    plt.xlim(xlim)
+    # plt.legend(fontsize=8)
+
+    ax = fig.add_subplot(axs[2])
+    for i, val in enumerate(alpha_hs):
+      plt.plot(np.log10(kernel_widths)+3, log_likelihood_list[i],
+          style[i], lw=1.2)
+    for v in max_ll_kernel_width:
+      plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    # plt.ylabel('log-likelihood')
+    plt.xlabel(r'$\sigma_w$ [ms]')
+    plt.xticks(xticks, xticks_label)
+    plt.xlim(xlim)
+
+    if output_dir is not None:
+      file_path = output_dir + experiment_name + 'bias_rmse_likeli_tune_alpha_h.pdf'
+      plt.savefig(file_path)
+      print('save figure:', file_path)
+    plt.show()
+
+
+  @classmethod
+  def plot_multiple_bias_theoretical(
+      cls,
+      par,
+      sigma_Is=[0.08,0.1,0.12],
+      sigma_hs=[0.02,0.03,0.04],
+      alpha_hs=[-2,0,2],
+      experiment_name=None,
+      output_dir=None):
+    """Scan the kernel window width."""
+    min_kernel_width, max_kernel_width = par['kernel_width']
+    log_kernel_widths = np.linspace(np.log10(min_kernel_width),
+                                    np.log10(max_kernel_width), 1000)
+    kernel_widths = np.power(10, log_kernel_widths)
+    xlim = (-0.3, 3.4)
+    xticks_label = [2, 5, 10, 20, 50, 100, 200, 500, 1000]
+    xticks = np.log10(np.array(xticks_label))
+    xticks = list(xticks)
+    style = ['k', 'b', 'g']
+
+    # ------------------ sigma_I ------------------
+    rmse_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    all_bias_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    bias_lim_list = np.zeros(len(sigma_Is))
+    log_likelihood_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    min_rmse_kernel_width = np.zeros(len(sigma_Is))
+    max_ll_kernel_width = np.zeros(len(sigma_Is))
+
+    par_input = par.copy()
+    for ind, sigma_I in enumerate(sigma_Is):
+      par_input['background_window_sigma'] = sigma_I
+      bias_list = np.zeros_like(kernel_widths)
+      var_list = np.zeros_like(kernel_widths)
+      ll_list = np.zeros_like(kernel_widths)
+      for i, kernel_width in enumerate(kernel_widths):
+        par_input['kernel_width'] = kernel_width
+        bias_list[i], _, _ = cls.bias_theoretical(par_input)
+        var_list[i] = cls.var_theoretical(par_input)
+        ll_list[i] = cls.log_likelihood_theoretical(par_input)
+      bias_lim_list[ind] = cls.bias_theoretical_extreme_cases(par_input)
+      rmse_list[ind] = np.sqrt(var_list + np.square(bias_list))
+      all_bias_list[ind] = np.array(bias_list)
+      log_likelihood_list[ind] = ll_list - np.max(ll_list)
+      nadir_ind = np.argmin(rmse_list[ind])
+      min_rmse_kernel_width[ind] = kernel_widths[nadir_ind]
+      max_ind = np.argmax(log_likelihood_list[ind])
+      max_ll_kernel_width[ind] = kernel_widths[max_ind]
+
+    gs_kw = dict(width_ratios=[1], height_ratios=[1,])
+    fig, axs = plt.subplots(figsize=(6, 2), gridspec_kw=gs_kw,
+        nrows=1, ncols=1)
+    plt.subplots_adjust(left=None, right=None, hspace=0.2, wspace=0)
+    ax = fig.add_subplot(axs)
+    ax.tick_params(labelbottom=False)
+    plt.axhline(0, lw=2, color='lightgrey')
+    for i, val in enumerate(sigma_Is):
+      plt.plot(np.log10(kernel_widths)+3, all_bias_list[i], style[i], lw=1.2,
+          label=fr'$\sigma_I=${val*1000:.0f} ms')
+      # plt.plot([3.4], [bias_lim_list[i]], '+', c=style[i], ms=11)
+
+    # for v in min_rmse_kernel_width:
+    #   plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    plt.ylabel('Bias [spikes/sec]', fontsize=12)
+    # plt.xlabel(r'$\sigma_w$ [ms]', fontsize=12)
+    plt.xticks(xticks, xticks_label, rotation=-45, fontsize=12)
+    plt.ylim(-1, 2.5)
+    plt.xlim(xlim)
+    # plt.legend(loc=[-0.2,1.05], ncol=3, fontsize=9)
+    plt.legend(loc=[0,.01], ncol=1, fontsize=9)
+
+    # ax = fig.add_subplot(axs[1])
+    # for i, val in enumerate(sigma_Is):
+    #   plt.plot(np.log10(kernel_widths)+3, log_likelihood_list[i],
+    #       style[i], lw=1.2)
+    # for v in max_ll_kernel_width:
+    #   plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    # plt.ylabel('log-likelihood')
+    # plt.xlabel(r'$\sigma_w$ [ms]')
+    # plt.xticks(xticks, xticks_label)
+    # plt.xlim(xlim)
+
+    if output_dir is not None:
+      file_path = output_dir + experiment_name + 'bias_tune_sigma_I.pdf'
+      plt.savefig(file_path)
+      print('save figure:', file_path)
+    plt.show()
+
+    # ------------------ sigma_h ------------------
+    rmse_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    all_bias_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    bias_lim_list = np.zeros(len(sigma_Is))
+    log_likelihood_list = np.zeros([len(sigma_Is), len(kernel_widths)])
+    min_rmse_kernel_width = np.zeros(len(sigma_Is))
+    max_ll_kernel_width = np.zeros(len(sigma_Is))
+
+    par_input = par.copy()
+    for ind, sigma_h in enumerate(sigma_hs):
+      par_input['filter_length'] = sigma_h
+      bias_list = np.zeros_like(kernel_widths)
+      var_list = np.zeros_like(kernel_widths)
+      ll_list = np.zeros_like(kernel_widths)
+      for i, kernel_width in enumerate(kernel_widths):
+        par_input['kernel_width'] = kernel_width
+        bias_list[i], _, _ = cls.bias_theoretical(par_input)
+        var_list[i] = cls.var_theoretical(par_input)
+        ll_list[i] = cls.log_likelihood_theoretical(par_input)
+      bias_lim_list[ind] = cls.bias_theoretical_extreme_cases(par_input)
+      rmse_list[ind] = np.sqrt(var_list + np.square(bias_list))
+      all_bias_list[ind] = np.array(bias_list)
+      log_likelihood_list[ind] = ll_list - np.max(ll_list)
+      nadir_ind = np.argmin(rmse_list[ind])
+      min_rmse_kernel_width[ind] = kernel_widths[nadir_ind]
+      max_ind = np.argmax(log_likelihood_list[ind])
+      max_ll_kernel_width[ind] = kernel_widths[max_ind]
+
+    gs_kw = dict(width_ratios=[1], height_ratios=[1])
+    fig, axs = plt.subplots(figsize=(6, 2), gridspec_kw=gs_kw,
+        nrows=1, ncols=1)
+    plt.subplots_adjust(left=None, right=None, hspace=0.2, wspace=0)
+    ax = fig.add_subplot(axs)
+    plt.axhline(0, lw=2, color='lightgrey')
+    for i, val in enumerate(sigma_hs):
+      plt.plot(np.log10(kernel_widths)+3, all_bias_list[i], style[i], lw=1.2,
+          label=fr'$\sigma_h=${val*1000:.0f} ms')
+    # for v in min_rmse_kernel_width:
+    #   plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    plt.ylabel('Bias [spikes/sec]')
+    plt.xlabel(r'$\sigma_w$ [ms]', fontsize=12)
+    plt.xticks(xticks, xticks_label, rotation=-45, fontsize=12)
+    plt.ylim(-1, 2.5)
+    plt.xlim(xlim)
+    # plt.legend(loc=[-0.2,1.05], ncol=3, fontsize=9)
+    plt.legend(loc=[0,.01], ncol=1, fontsize=9)
+
+    # ax = fig.add_subplot(axs[1])
+    # for i, val in enumerate(sigma_hs):
+    #   plt.plot(np.log10(kernel_widths)+3, log_likelihood_list[i],
+    #       style[i], lw=1.2)
+    # for v in max_ll_kernel_width:
+    #   plt.axvline(np.log10(v)+3, color='lightgrey', lw=1)
+    # plt.ylabel('log-likelihood')
+    # plt.xlabel(r'$\sigma_w$ [ms]')
+    # plt.xticks(xticks, xticks_label)
+    # plt.xlim(xlim)
+
+    if output_dir is not None:
+      file_path = output_dir + experiment_name + 'bias_tune_sigma_h.pdf'
+      plt.savefig(file_path)
+      print('save figure:', file_path)
+    plt.show()
+
+    return
 
     # ------------------ alpha_h ------------------
     rmse_list = np.zeros([len(sigma_Is), len(kernel_widths)])
@@ -8455,6 +9324,104 @@ class JitterTool(object):
 
 
   @classmethod
+<<<<<<< HEAD
+  def estimate_optimal_jitter_window_width_full_regression(
+      cls,
+      spike_times_x, spike_times_y,
+      model_par,
+      kernel_width_grid=None,
+      output_dir=None):
+    """Calculate Sxx from raw data."""
+    trial_window = model_par['trial_window']
+    num_trials = len(spike_times_y)
+    num_spikes_x = [len(spikes) for spikes in spike_times_x]
+    num_spikes_x = np.sum(num_spikes_x)
+    num_spikes_y = [len(spikes) for spikes in spike_times_y]
+    num_spikes_y = np.sum(num_spikes_y)
+    trial_length = trial_window[1]
+    model_par['num_trials'] = num_trials
+    model_par['trial_length'] = trial_length
+    bar_lambda_i = num_spikes_x / num_trials / trial_length
+    bar_lambda_j = num_spikes_y / num_trials / trial_length
+    # Coupling filter. The estimator is not sensitive to this.
+    if 'filter_type' not in model_par:
+      model_par['filter_type'] = 'square'
+      model_par['filter_length'] = 0.03
+    if 'learning_rate' not in model_par:
+      model_par['learning_rate'] = 0.5
+    if 'max_num_itrs' not in model_par:
+      model_par['max_num_itrs'] = 40
+    if 'epsilon' not in model_par:
+      model_par['epsilon'] = 1e-6
+    if 'const_offset' not in model_par:
+      model_par['const_offset'] = 0
+
+    # Numerical. # The columns are: const, W, h, y.
+    # kernel_widths_sim = np.array([35]) / 1000
+    if model_par['append_nuisance'][1] == 'gaussian_kernel':
+      kernel_widths_sim = np.array([
+          2,3,5,10,20,30,40,45,50,55,60,65,70,75,80,85,90,95,
+          100,105,110,120,125,130,135,140,145,150,155,160,200,400]) / 1000
+    elif model_par['append_nuisance'][1] == 'triangle_kernel':
+      kernel_widths_sim = np.array([
+          40,80,100,120,130,150,160,180,
+          200,250,400,420,430,450, 480,500,550,600,620,650,800,1000]) / 1000
+    else:
+      kernel_widths_sim = np.array([
+          10,20,30,40,45,50,55,60,65,70,80,90,95,
+          100,105,110,120,125,130,135,140,145,150,155,160,180,
+          200,250,300,350,400,420,430,450,480,
+          500,550,600,620,650,800,1000]) / 1000
+
+    if kernel_width_grid is not None:
+      kernel_widths_sim = kernel_width_grid
+
+    num_scenarios = len(kernel_widths_sim)
+    Sxx_hat = np.zeros([num_scenarios,5,5])
+    log_likeli_hat = np.zeros(num_scenarios)
+
+    for k, kernel_width in tqdm(enumerate(kernel_widths_sim), file=sys.stdout,
+        ncols=100, total=len(kernel_widths_sim)):
+      par_input = model_par.copy()
+      par_input['kernel_width'] = kernel_width
+      model_par_hat = cls.bivariate_continuous_time_coupling_filter_full_regression(
+          spike_times_x, spike_times_y, trial_window, par_input, verbose=False)
+      log_likeli_hat[k] = -model_par_hat['nll']
+
+    # Align the peak of the log-likelihood to the peak.
+    log_likeli_hat = log_likeli_hat - np.max(log_likeli_hat)
+    xlim = (0, 3.2)
+    xticks_label = [2, 5, 10, 20, 50, 100, 200, 500, 1000]
+    xticks = np.log10(np.array(xticks_label))
+    xticks = list(xticks)
+    max_ind = np.argmax(log_likeli_hat)
+    max_ll_kernel_width = kernel_widths_sim[max_ind]
+    print(f'optimal kernel width  {max_ll_kernel_width * 1000}')
+
+    gs_kw = dict(width_ratios=[1], height_ratios=[1])
+    fig, axs = plt.subplots(figsize=(6, 2), gridspec_kw=gs_kw,
+        nrows=1, ncols=1)
+    ax = fig.add_subplot(axs)
+    plt.axvline(np.log10(max_ll_kernel_width)+3, color='lightgrey', lw=1)
+    plt.plot(np.log10(kernel_widths_sim)+3, log_likeli_hat,
+        '.-', c='tab:blue', label='numerical')
+    plt.xlim(xlim)
+    plt.xticks(xticks, xticks_label)
+    plt.ylabel('log-likelihood')
+    plt.xlabel(r'$\sigma_w$ [ms]')
+
+    if output_dir is not None:
+      file_path = output_dir + experiment_name + f'Sxx_{basis_i}_{basis_j}.pdf'
+      plt.savefig(file_path)
+      print('save figure:', file_path)
+    plt.show()
+
+    return kernel_widths_sim, log_likeli_hat, max_ll_kernel_width
+
+
+  @classmethod
+=======
+>>>>>>> ef55af5921e517f5d2b190ac00779c5b695fe467
   def estimate_optimal_jitter_window_width(
       cls,
       spike_times_x, spike_times_y,
@@ -9040,11 +10007,12 @@ class JitterTool(object):
     #   plt.show()
         # This part is for paper KS bias analysis.
     if figure_path is not None:
-      plt.figure(figsize=[3, 2.7])
-      plt.plot(mcdf, ecdf, 'k')
+      # plt.figure(figsize=[3, 2.7])
+      plt.figure(figsize=[2.2, 2])
       plt.plot(mcdf, CI_up, '--', color='lightgrey')
       plt.plot(mcdf, CI_dn, '--', color='lightgrey')
       # plt.plot(mcdf, mcdf, 'k--')
+      plt.plot(mcdf, ecdf, 'k')
       plt.axis([0,1,0,1])
       plt.xticks([0, 1], [0, 1])
       plt.yticks([0, 1], [0, 1])
@@ -9247,6 +10215,97 @@ class JitterTool(object):
 
     return u_list
 
+
+  #TODO: merge redundant function.
+  @classmethod
+  def ks_test_self_coupling(
+      cls,
+      spike_times_x,
+      spike_times_y,
+      trial_window,
+      model_par,
+      dt=0.001,
+      test_size=0.05,
+      verbose=True):
+    """Verify optimization values."""
+    model_par['dt'] = dt
+    num_trials = len(spike_times_y)
+    num_spikes_x = [len(spikes) for spikes in spike_times_x]
+    num_spikes_x = np.sum(num_spikes_x)
+    num_spikes_y = [len(spikes) for spikes in spike_times_y]
+    num_spikes_y = np.sum(num_spikes_y)
+    T = trial_window[1]
+    trial_length = trial_window[1] - trial_window[0]
+    num_bins_trial = int(trial_length/dt)
+    beta = model_par['beta']
+
+    spike_hist_stacked_x, bins = cls.bin_spike_times(spike_times_x, dt,
+        trial_window=trial_window)
+    spike_hist_stacked_y, _ = cls.bin_spike_times(spike_times_y, dt,
+        trial_window=trial_window)
+    (num_basis, num_samples, X, basis_integral, offset, offset_integral
+        ) = cls.bivariate_discrete_time_coupling_filter_self_coupling_build_regressors(
+        spike_hist_stacked_x, spike_hist_stacked_y, trial_window, model_par, mean_norm=True)
+    lambda_hat = X @ beta
+
+    # ------ Model fitting. ------
+    # learning_rate = model_par['learning_rate']
+    # num_itrs = model_par['max_num_itrs']
+    # epsilon = model_par['epsilon']
+    # basis_integral_discrete = np.sum(X, axis=0, keepdims=True).T * dt
+    # print('discrete integral   ', basis_integral_discrete.T)
+    # print('continuous integral ', basis_integral.T)
+    # print('X.shape', X.shape)
+    # print('num_bins_trial', num_bins_trial)
+    # spike_hist_stacked_y, _ = cls.bin_spike_times(spike_times_y, dt,
+    #     trial_window=trial_window)
+    # spike_hist_y = spike_hist_stacked_y.reshape(-1, 1)
+    # basis_integral = basis_integral_discrete
+    # beta = np.zeros([num_basis, 1])
+    # beta[0] = num_spikes_y / num_trials / (trial_window[1]-trial_window[0])
+    # beta_old = beta
+    # for itr in range(num_itrs):
+    #   lambda_hat = X @ beta
+    #   vec = (X * spike_hist_y) / lambda_hat
+    #   gradient = - np.sum(vec, axis=0, keepdims=True).T
+    #   gradient = gradient + basis_integral
+    #   hessian = vec.T @ vec
+    #   beta = beta - learning_rate * np.linalg.inv(hessian) @ gradient
+    #   # Check convergence.
+    #   beta_err = np.sum(np.abs(beta_old - beta))
+    #   if beta_err < epsilon:
+    #     break
+    #   beta_old = beta
+    #   if itr % 1 == 0 and verbose:
+    #   # if itr % (num_itrs//10) == 0:
+    #     nll = - np.sum(spike_hist_y * np.log(lambda_hat))
+    #     nll += lambda_hat.sum() * dt
+    # print(f'itr{itr}\tnll: {nll:.1f}\tbeta: {beta.reshape(-1)}')
+
+    u_list = []
+    start_ind = 0
+    end_ind = num_bins_trial
+    for r in range(num_trials):
+      lambda_hat_r = lambda_hat[start_ind:end_ind]
+      # if np.max(lambda_hat_r*dt) > 20:
+      #   plt.figure(figsize=[4, 1.5])
+      #   plt.plot(lambda_hat_r)
+      #   plt.show()
+      u_vals = cls.ks_test_interval_transform(spike_times_y[r],
+          lambda_hat_r*dt, dt=dt, bins=bins[:-1], verbose=False)
+      if len(u_vals) == 0:
+        continue
+      u_list.append(u_vals)
+      start_ind += num_bins_trial
+      end_ind += num_bins_trial
+
+    u_list = np.vstack(u_list).reshape(-1)
+
+    if verbose:
+      CI_trap, mcdf, ecdf, CI_up, CI_dn = cls.check_ks(u_list,
+          test_size, bin_width=0.02, verbose=True)
+
+    return u_list
 
 
   @classmethod
